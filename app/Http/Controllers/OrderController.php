@@ -61,16 +61,33 @@ class OrderController extends Controller
             ]);
         }
 
-        // Generate QR Code
+        // Generate QR Code for pickup orders
         if ($request->delivery_type === 'pickup') {
             $qrContent = route('order.status', $orderCode);
             $qrPath = 'qr-codes/' . $orderCode . '.svg';
+            
+            // Create directory if not exists
+            $qrDirectory = public_path('storage/qr-codes');
+            if (!file_exists($qrDirectory)) {
+                mkdir($qrDirectory, 0755, true);
+            }
+            
             QrCode::size(200)->generate($qrContent, public_path('storage/' . $qrPath));
             $order->update(['qr_code_path' => $qrPath]);
         }
 
         // Log activity
         ActivityLog::log('sistem', 'Membuat pesanan baru: ' . $orderCode, 'Order', $order->toArray());
+
+        // Return JSON response for AJAX requests
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Pesanan berhasil dibuat',
+                'order_code' => $orderCode,
+                'redirect_url' => route('order.status', $orderCode)
+            ]);
+        }
 
         return redirect()->route('order.status', $orderCode);
     }
@@ -84,9 +101,28 @@ class OrderController extends Controller
     public function cancel($orderCode)
     {
         $order = Order::where('order_code', $orderCode)->firstOrFail();
+        
+        // Only allow cancellation if payment is still pending
+        if ($order->payment_status !== 'pending') {
+            if (request()->expectsJson() || request()->ajax()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pesanan tidak dapat dibatalkan karena status pembayaran bukan pending'
+                ]);
+            }
+            return redirect()->back()->with('error', 'Pesanan tidak dapat dibatalkan');
+        }
+        
         $order->update(['payment_status' => 'cancel']);
         
         ActivityLog::log('sistem', 'Membatalkan pesanan: ' . $orderCode, 'Order');
+        
+        if (request()->expectsJson() || request()->ajax()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Pesanan berhasil dibatalkan'
+            ]);
+        }
         
         return redirect()->back()->with('success', 'Pesanan berhasil dibatalkan');
     }
